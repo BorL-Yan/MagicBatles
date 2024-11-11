@@ -2,6 +2,7 @@ using UnityEngine;
 using System;
 using System.Collections;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
@@ -11,7 +12,7 @@ using System.Threading.Tasks;
 namespace MagicBattles
 {
     using CSM = Clien_ServerMassage;
-    public class Client : PlayerManager
+    public class ClientController : PlayerManager
     {
 
         [SerializeField] private string serverIP = "127.0.0.1"; // Set this to your server's IP address.
@@ -24,12 +25,26 @@ namespace MagicBattles
 
         
         private ConcurrentQueue<byte[]> serverMessage = new ConcurrentQueue<byte[]>();
+
+        private Dictionary<byte, IServerCommand> _commands;
         
         protected override void Initialization() => base.Initialization();
+        
+        private void InitializeCommands()
+        {
+            _commands = new Dictionary<byte, IServerCommand>
+            {
+                { (byte)CSM.InitialClientData, new InitializeDataCommand() },
+                { (byte)CSM.ClientHelath, new HealthAmountCommand() },
+                { (byte)CSM.ClientAbility, new AbilityAmountCommand() },
+                { (byte)CSM.MyTurn, new MyTurnCommand() }
+            };
+        }
         
         void Start()
         {
             Invoke(nameof(ConnectToServer), 0.1f);
+            InitializeCommands();
         }
 
         void Update()
@@ -110,47 +125,9 @@ namespace MagicBattles
             await Task.CompletedTask;
             try
             {
-                switch (message[0])
+                if (_commands.TryGetValue(message[0], out var command))
                 {
-                    case ((byte)CSM.InitialClientData):
-                    {
-
-                        InitialClientData initialClientData = new InitialClientData();
-                        initialClientData.Decode(message);
-                        UnitStats stats = new UnitStats(initialClientData.ID, initialClientData.Health);
-                        m_Player.PlayerInitializationStats(stats);
-
-                        break;
-                    }
-                    case (byte)CSM.ClientHelath:
-                    {
-                        
-                        ClientHealthAmount clientHealth = new ClientHealthAmount();
-                        clientHealth.Decode(message);
-                        //m_Player.Health = clientHealth.Health;
-                        m_Player.SetPlayerInfo(clientHealth);
-
-                        break;
-                    }
-                    case (byte)CSM.ClientAbility:
-                    {
-                        ClietnAbilityAmount clinetAbility = new ClietnAbilityAmount();
-
-                        clinetAbility.Decode(message);
-
-                        m_Player.SetAbility(clinetAbility.Ability);
-
-                        break;
-                    }
-                    case (byte)CSM.MyTurn:
-                    {
-                        ClientTurn clientTurn = new ClientTurn();
-                        clientTurn.Decode(message);
-                        m_Player.MyTurn = clientTurn.MyTurn;
-                        // Debug.Log($"ID: {m_Player.ID}, Turn for attack: {m_Player.MyTurn}");
-
-                        break;
-                    }
+                    command.Execute(message, this, m_Player);
                 }
             }
             catch (Exception e)
@@ -163,8 +140,6 @@ namespace MagicBattles
 
         private async Task SendMessageToServer(byte[] data)
         {
-            
-            //Debug.Log(this.gameObject.name);
             try
             {
                 if (client == null || !client.Connected)
@@ -172,9 +147,8 @@ namespace MagicBattles
                     Debug.LogError("Client not connected to server.");
                     return;
                 }
-                //Debug.Log("Sent message to server: " + data);
+                
                 await stream.WriteAsync(data, 0, data.Length);
-
             }
             catch (Exception e)
             {

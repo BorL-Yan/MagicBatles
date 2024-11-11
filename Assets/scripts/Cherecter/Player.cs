@@ -77,7 +77,7 @@ namespace MagicBattles
             
             UseAbility useAbility = new UseAbility(ID, IDEnamy, id_attack);
             
-            _client.GetMessageToServer(useAbility.Encode());
+            ClientController.GetMessageToServer(useAbility.Encode());
             
             MyTurn = false;
         }

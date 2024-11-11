@@ -42,6 +42,9 @@ namespace MagicBattles
                 _health = (value>=100) ? 100 : value;
             }
         }
+        
+        public bool isDead => _health <= 0;
+        
         private List<IAbility> _interactionAbilites = new List<IAbility>();
         public List<IAbility> InteractionAbilites
         {
@@ -52,19 +55,17 @@ namespace MagicBattles
                     _interactionAbilites = value;
             }
         }
-        private List<IAbility> activeAbilites = new List<IAbility>();
-
-        public List<IAbility> ActiveAbilites
-        {
-            get => activeAbilites;
-        }
+        public List<IAbility> ActiveAbilites { get; private set;} = new List<IAbility>();
+        
         public ClientStats(int _id, int health = 100)
         {
             ID = _id;
             Health = health;
         }
+        
+        
 
-        public void SetAbility(bool isInteraction, IAbility _ability)
+        public void SetAbility(IAbility _ability, bool isInteraction)
         {
             if (isInteraction) {
                 AddAbility(InteractionAbilites);
@@ -75,30 +76,24 @@ namespace MagicBattles
 
             void AddAbility(List<IAbility> abilites)
             {
-                foreach (var item in abilites)
-                {
-                    if (item.GetName() == _ability.GetName())
-                    {
-                        abilites.Remove(item);
-                        abilites.Add(_ability);
-                        return;
-                    }
-                }
-                abilites.Add(_ability);
+                var existingAbility = abilites
+                    .FirstOrDefault(item => item.GetName() == _ability.GetName());
+                
+                if (existingAbility != null)
+                    Debug.Log("An Ability of the given type already exists");
+                else
+                    abilites.Add(_ability);
             }
         }
         
         public byte GetAbilityReloadingCount(Ability_Name name)
         {
-            foreach (var item in ActiveAbilites)
-            {
-                if (item.GetName() == name)
-                {
-                    DurationHandler reloading = (DurationHandler)item;
-                    return reloading.Reloading;
-                }
-            }
-            return 0;
+            byte reloading = ActiveAbilites
+                .Where(a => a.GetName() == name)
+                .OfType<DurationHandler>()
+                .FirstOrDefault()?.Reloading ?? 0;
+            
+            return reloading;
         }
         
         public void CliningAbality()
@@ -106,23 +101,7 @@ namespace MagicBattles
             Debug.Log($"Clining Abality");
 
             InteractionAbilites.RemoveAll(ability => ability is IDamageable);
-
-            //
-            // var abilitesToRemuve = new List<IAbility>();
-            // foreach (var ability in InteractionAbilites)
-            // {
-            //     if (ability is IDamageable)
-            //     {
-            //         Debug.Log($"Clining Ability: {ability.GetName()}");
-            //         
-            //         abilitesToRemuve.Add(ability);
-            //     }
-            // }
-            //
-            // foreach (var ability in abilitesToRemuve)
-            // {
-            //     InteractionAbilites.Remove(ability);
-            // }
+            
         }
 
         public void EmployAbility()
@@ -144,13 +123,9 @@ namespace MagicBattles
 
         public void LastColculation()
         {
-            foreach (var ability in InteractionAbilites)
-            {
-                if (ability is ILongTime_Interaction interaction)
-                {
-                    Health += interaction.Interaction;
-                }
-            }
+            Health += InteractionAbilites
+                .OfType<ILongTime_Interaction>()
+                .Sum(interaction => interaction.Interaction);
         }
     }
 
@@ -297,12 +272,16 @@ namespace MagicBattles
             
             for (int i = 0; i < Ability.Count; i++)
             {
-                result[i*2+1] = Ability[i][0];  
-                result[i*2+2] = Ability[i][1];
+                if (Ability[i].Length >= 2)
+                {
+                    result[i*2+1] = Ability[i][0];  
+                    result[i*2+2] = Ability[i][1];
+                }
+                else
+                {
+                    Debug.LogWarning($"Ability element at index {i} does not have the expected 2 bytes.");
+                }
             }
-            
-            
-            
             return result;
         }
 
@@ -383,6 +362,32 @@ namespace MagicBattles
             MyTurn = data[1] == 1 ? true : false;
         }
     }
+
+    public class WinOrLose : IEncode
+    {
+        public bool YouWin { get; set; }
+
+        public WinOrLose(bool win = false)
+        {
+            YouWin = win;
+        }
+
+        public byte[] Encode()
+        {
+            byte type = (byte)Clien_ServerMassage.WinOrLuse;
+            byte win = (byte)(YouWin ? 1 : 0);
+            return new byte[] { type, win };
+        }
+        
+        public void Decode(byte[] data)
+        {
+            if (data == null || data.Length % 2 != 0)
+            {
+                Debug.LogWarning($"WinOrLose Data is not Corect: {data.Length}");
+            }
+            YouWin = data[1] == 1 ? true : false;
+        }
+    }
     
 #endregion
     
@@ -433,6 +438,11 @@ namespace MagicBattles
         void Execute(byte[] data, ServerController server);
     }
 
+    public interface IServerCommand
+    {
+        void Execute(byte[] data, ClientController server, Player player);
+    }
+    
     public class UseAbilityCommand : IClientCommand
     {
         public void Execute(byte[] data, ServerController server)
@@ -440,6 +450,49 @@ namespace MagicBattles
             UseAbility useAbility = new UseAbility();
             useAbility.Decode(data);
             server.AttackEnamy(useAbility);
+        }
+    }
+
+    
+    
+    public class InitializeDataCommand : IServerCommand
+    {
+        public void Execute(byte[] data, ClientController server, Player player)
+        {
+            InitialClientData initialClientData = new InitialClientData();
+            initialClientData.Decode(data);
+            UnitStats stats = new UnitStats(initialClientData.ID, initialClientData.Health);
+            player.PlayerInitializationStats(stats);
+        }
+    }
+
+    public class HealthAmountCommand : IServerCommand
+    {
+        public void Execute(byte[] data, ClientController server, Player player)
+        {
+            ClientHealthAmount clientHealth = new ClientHealthAmount();
+            clientHealth.Decode(data);
+            player.SetPlayerInfo(clientHealth);
+        }
+    }
+
+    public class AbilityAmountCommand : IServerCommand
+    {
+        public void Execute(byte[] data, ClientController server, Player player)
+        {
+            ClietnAbilityAmount clinetAbility = new ClietnAbilityAmount();
+            clinetAbility.Decode(data);
+            player.SetAbility(clinetAbility.Ability);
+        }
+    }
+
+    public class MyTurnCommand : IServerCommand
+    {
+        public void Execute(byte[] data, ClientController server, Player player)
+        {
+            ClientTurn clientTurn = new ClientTurn();
+            clientTurn.Decode(data);
+            player.MyTurn = clientTurn.MyTurn;
         }
     }
     
@@ -461,6 +514,6 @@ namespace MagicBattles
         MyTurn,
         CanMakeChosenServer,
         CanMakeChosenClient,
-        WinorLus,
+        WinOrLuse,
     }
 }

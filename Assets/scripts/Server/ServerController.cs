@@ -4,8 +4,10 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using UnityEngine.PlayerLoop;
 using Exception = System.Exception;
 
 namespace MagicBattles.Server
@@ -123,6 +125,10 @@ namespace MagicBattles.Server
             {
                 command.Execute(data, this);
             }
+            else
+            {
+                Debug.Log($"Not a Command!!!: {data[0]}");
+            }
             await LastColculation();
         }
         
@@ -141,28 +147,28 @@ namespace MagicBattles.Server
                 }
                 case (byte)Ability_Name.Barrier:
                 {
-                    myUnit.SetAbility(true, new Barrier());
-                    myUnit.SetAbility(false, new Barrier());
+                    myUnit.SetAbility( new Barrier(), true);
+                    myUnit.SetAbility( new Barrier(), false);
                     break;
                 }
                 case (byte)Ability_Name.Regeneration:
                 {
-                    myUnit.SetAbility(true, new Regeneration());
-                    myUnit.SetAbility(false, new Regeneration());
+                    myUnit.SetAbility( new Regeneration(), true);
+                    myUnit.SetAbility( new Regeneration(), false);
                     break;
                 }
                 case (byte)Ability_Name.FireBol:
                 {
                     FireBol _fireBol = new FireBol();
                     enamyUnit.Health -= _fireBol.Damage;
-                    enamyUnit.SetAbility(true, new FireBol());
-                    myUnit.SetAbility(false, new FireBol());
+                    enamyUnit.SetAbility( new FireBol(), true);
+                    myUnit.SetAbility( new FireBol(), false);
                     break;
                 }
                 case (byte)Ability_Name.Cleaning:
                 {
                     myUnit.CliningAbality();
-                    myUnit.SetAbility(false, new Cleaning());
+                    myUnit.SetAbility( new Cleaning(), false);
                     break;
                 }
             }
@@ -171,46 +177,50 @@ namespace MagicBattles.Server
 
         private async Task LastColculation()
         {
-            GetAllClient_Helath_Amount();
+            await GetAllClient_Helath_Amount();
             await Task.Delay(100);
-            GetAllClient_Ability_Amount();
+            await GetAllClient_Ability_Amount();
             foreach (var client in clients)
             {
                 client.Key.LastColculation();
                 client.Key.EmployAbility();
             }
-            GetAllClient_Helath_Amount();
-            GetAllClient_Turn();
+            await GetAllClient_Helath_Amount();
+            await GetAllClient_Turn();
         }
 
+        private async Task WhoIsTheWinner()
+        {
+            bool thereIsAWiner = false;
+            foreach (var client in clients)
+            {
+                thereIsAWiner = client.Key.isDead;
+            }
+
+            if (!thereIsAWiner) return;
+            
+            foreach (var client in clients)
+            {
+                await SendMessageToClient(client.Key.ID,new WinOrLose(client.Key.isDead).Encode());
+            }
+        }
+        
         private async Task GetAllClient_Ability_Amount()
         {
             try
             {
                 foreach (var client in clients)
                 {
-                    
-                    List<byte[]> byte_abality= new List<byte[]>();
-                    
-                    foreach (var item in client.Key.ActiveAbilites)
-                    {
-                        if (item is DurationHandler reloading)
+                    List<byte[]> ability = client.Key.ActiveAbilites
+                        .Where(item => item is DurationHandler)
+                        .Select(item =>
                         {
+                            var reloading = item as DurationHandler;
                             Ability_Name abilityName = item.GetName();
-                            
-                            // Debug.Log($" Ability Name: {abilityName}, " +
-                            //           $"\n Ability finished: {reloading.AbilityFinished}, Duration finished: {reloading.DurationFinished}," +
-                            //           $"\n Reloading: {reloading.Reloading}, Duration: {reloading.Duration}");
-                            //
-                            byte[] addToList = {(byte)abilityName, reloading.Reloading};
-                            byte_abality.Add(addToList);
-                        }
-                    }
-                    
-                    ClietnAbilityAmount abilityAmount = new ClietnAbilityAmount(byte_abality);
-                    
-                    byte[] data = abilityAmount.Encode();
-                    _ = SendMessageToClient(client.Key.ID, data);
+                            return new byte[] { (byte)abilityName, reloading.Reloading };
+                        })
+                        .ToList();
+                    await SendMessageToClient(client.Key.ID, new ClietnAbilityAmount(ability).Encode());
                 }
             }
             catch (Exception e)
@@ -225,10 +235,7 @@ namespace MagicBattles.Server
             {
                 foreach (var client in clients)
                 {
-                    ClientHealthAmount clientStatus = new ClientHealthAmount(client.Key.Health);
-                
-                    byte[] data = clientStatus.Encode();
-                    _ = SendMessageToClient(client.Key.ID, data);
+                    await SendMessageToClient(client.Key.ID, new ClientHealthAmount(client.Key.Health).Encode());
                 }
             }
             catch (Exception e)
@@ -242,29 +249,18 @@ namespace MagicBattles.Server
             try
             {
                 int clientIDTurn = GetTurnClient();
-
-                
-                ClientTurn clientTurn = new ClientTurn();
                 foreach (var client in clients)
                 {
-                    clientTurn.MyTurn = false;
-                    if (client.Key.ID == clientIDTurn)
-                    {
-                        clientTurn.MyTurn = true;
-                        //client.Key.MyTurn = true;
-                    }
+                    ClientTurn clientTurn = new ClientTurn();
+                    if (client.Key.ID == clientIDTurn) clientTurn.MyTurn = true;
 
-                    byte[] data = clientTurn.Encode();
-                    Debug.Log($"Send Turn: {client.Key.ID}");
-                    _ = SendMessageToClient(client.Key.ID, data);
+                    await SendMessageToClient(client.Key.ID, clientTurn.Encode());
                 }
             }
             catch (Exception e)
             {
                 Debug.LogWarning($"Exeption: {e.Message}");
-                throw;
             }
-            
         }
 
         private int GetTurnClient()
@@ -277,6 +273,12 @@ namespace MagicBattles.Server
         public async Task SendMessageToClient(int id, byte[] messageToCLient)
         {
             TcpClient client = GetClient(id);
+            if (client == null)
+            {
+                Debug.LogWarning($"Client {id} not found.");
+                return;
+            }
+            
             NetworkStream stream = client.GetStream();
             try
             {

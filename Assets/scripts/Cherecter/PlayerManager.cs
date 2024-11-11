@@ -6,7 +6,7 @@ namespace MagicBattles
     public class PlayerManager : MonoBehaviour
     {
         protected Player m_Player;
-        protected Client _client;
+        protected ClientController ClientController;
         protected HealtAmplitude _healAmplitude;
         
         protected bool m_isFinished;
@@ -19,7 +19,7 @@ namespace MagicBattles
         protected virtual void Initialization()
         {
             m_Player = GetComponent<Player>();
-            _client = GetComponent<Client>();
+            ClientController = GetComponent<ClientController>();
             _healAmplitude = GetComponent<HealtAmplitude>();
         }
     }
